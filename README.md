@@ -1,4 +1,4 @@
-# change-monitor
+# landchange-llm
 
 Measure how a place changed between two dates using free Sentinel-2 satellite imagery: before/after images, a change map, hectares per category, and a short written report. Runs on a laptop CPU, with no account or key needed.
 

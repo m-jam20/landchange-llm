@@ -1,1 +1,1 @@
-"""change-monitor: measure how a place on Earth changed between two dates."""
+"""landchange-llm: measure how a place on Earth changed between two dates."""

@@ -21,7 +21,7 @@ from change_monitor.report import available_providers, describe_provider
 from change_monitor.search import bbox_area_km2, validate_bbox
 from change_monitor.ui_helpers import bbox_from_geojson, change_table, check_periods, date_range, zip_folder
 
-st.set_page_config(page_title="Change Monitor", page_icon="🛰️", layout="wide")
+st.set_page_config(page_title="LandChange LLM", page_icon="🛰️", layout="wide")
 
 NO_AI = "none"  # dropdown value for the basic report
 
@@ -82,7 +82,7 @@ with st.sidebar:
         )
 
 # ---------------------------------------------------------------- header
-st.title("🛰️ Change Monitor")
+st.title("🛰️ LandChange LLM")
 st.caption(
     "How did a place change between two dates? Free Sentinel-2 satellite images, "
     "measured in hectares. Draw a rectangle on the map, pick two periods, and run."
