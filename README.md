@@ -46,6 +46,14 @@ Optional AI report: copy `.env.example` to `.env` and add a key. Gemini has a fr
 - Bright ground (salt flats, sand, snow) can be mistaken for cloud.
 - Compare the same season in both periods. Images exist from June 2015.
 
+## Other imagery
+
+The pipeline currently uses Sentinel-2. The same steps (align, compare indices, count hectares, report) can also work with other georeferenced images: **Landsat** (30 m, back to 1982), **Sentinel-1 radar** (sees through clouds), **aerial photos** and **drone orthomosaics** (GeoTIFF, centimetre detail). With RGB-only cameras, colour indices such as ExG replace NDVI. These sources are not built in yet.
+
 ## Data
 
 Contains modified Copernicus Sentinel data (2016–2025), via the [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/sentinel-2-l2a). Map © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
+
+## License
+
+[MIT](LICENSE)
