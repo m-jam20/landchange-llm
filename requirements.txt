@@ -1,0 +1,24 @@
+# Finding and loading satellite data
+pystac-client>=0.9
+planetary-computer>=1.0
+odc-stac>=0.5
+rasterio>=1.5
+shapely>=2.0
+
+# Arrays and pictures
+numpy>=2.0
+xarray>=2026.1
+matplotlib>=3.10
+
+# AI report (optional at runtime: Gemini if GEMINI_API_KEY is set, else Claude if ANTHROPIC_API_KEY is set)
+anthropic>=2.0
+google-genai>=3.6
+python-dotenv>=1.0
+
+# Web UI
+streamlit>=1.60
+streamlit-folium>=0.28
+folium>=1.0
+
+# Tests
+pytest>=9.0

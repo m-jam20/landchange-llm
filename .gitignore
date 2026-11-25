@@ -1,0 +1,20 @@
+# Private notes (never committed)
+notes/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Secrets
+.env
+
+# Generated results
+outputs/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
