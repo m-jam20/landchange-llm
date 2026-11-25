@@ -14,6 +14,7 @@ from change_monitor.report import (
     write_report,
     write_with_claude,
     write_with_gemini,
+    write_with_openai_compatible,
 )
 
 STATS = {
@@ -31,8 +32,8 @@ CONTEXT = {"place": "Test town", "before_image_date": "2023-06-05", "after_image
 @pytest.fixture
 def no_keys(monkeypatch):
     """Pretend no API keys exist (and ignore any real .env file)."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for name in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(report, "load_dotenv", lambda: None)
 
 
@@ -166,7 +167,8 @@ def test_ai_success_is_labelled_with_the_model(no_keys, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     monkeypatch.setitem(report.WRITERS, "gemini", lambda stats, context: "# AI text")
     result = write_report(STATS, CONTEXT)
-    assert (result.text, result.source, result.note) == ("# AI text", report.config.GEMINI_MODEL, None)
+    assert result.text == "# AI text" and result.note is None
+    assert result.source == f"Google Gemini · {report.config.GEMINI_MODEL}"
 
 
 def test_gemini_is_asked_to_think_little_for_speed():
@@ -188,3 +190,105 @@ def test_prompt_separates_visible_from_unchanged():
     prompt = build_prompt(STATS, CONTEXT)
     assert '"pct_of_area_visible_on_both_dates": 98.6' in prompt
     assert '"pct_of_visible_area_unchanged": 97.0' in prompt  # (2490.61 - 74.9) / 2490.61
+
+
+# ---------------------------------------------------------------- any OpenAI-compatible company
+class FakeOpenAI:
+    """Looks like openai.OpenAI() just enough, and records the request."""
+
+    def __init__(self, text="# Report\nAbout 30 ha.", error=None, finish_reason="stop"):
+        self.request = None
+
+        def create(**kwargs):
+            self.request = kwargs
+            if error:
+                raise error
+            message = SimpleNamespace(content=text)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish_reason)])
+
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+
+def openai_error(cls, status):
+    """A real openai error object, built the way the library builds it."""
+    import httpx2 as httpx  # the HTTP library the openai SDK (3.x) is built on
+    import openai
+
+    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+    if cls in (openai.APIConnectionError, openai.APITimeoutError):
+        return cls(request=request)
+    return cls("error", response=httpx.Response(status, request=request), body=None)
+
+
+def test_other_ai_sends_system_and_user_messages(no_keys, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "some-model")
+    client = FakeOpenAI()
+    assert write_with_openai_compatible(STATS, CONTEXT, client=client) == "# Report\nAbout 30 ha."
+    roles = [m["role"] for m in client.request["messages"]]
+    assert roles == ["system", "user"] and client.request["model"] == "some-model"
+    assert "29.65" in client.request["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("error_class", "status", "message"),
+    [
+        ("AuthenticationError", 401, "key was rejected"),
+        ("NotFoundError", 404, "does not know the model"),
+        ("RateLimitError", 429, "rate limit"),
+        ("APITimeoutError", None, "did not answer within"),
+        ("APIConnectionError", None, "Could not reach"),
+    ],
+)
+def test_other_ai_errors_give_clear_messages(no_keys, monkeypatch, error_class, status, message):
+    import openai
+
+    monkeypatch.setenv("LLM_MODEL", "some-model")
+    error = openai_error(getattr(openai, error_class), status)
+    with pytest.raises(ReportUnavailable, match=message):
+        write_with_openai_compatible(STATS, CONTEXT, client=FakeOpenAI(error=error))
+
+
+def test_other_ai_empty_answer_is_reported(no_keys, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "some-model")
+    with pytest.raises(ReportUnavailable, match="no text"):
+        write_with_openai_compatible(STATS, CONTEXT, client=FakeOpenAI(text=None, finish_reason="length"))
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (None, "OpenAI"),
+        ("https://api.mistral.ai/v1", "mistral"),
+        ("https://api.groq.com/openai/v1", "groq"),
+        ("https://openrouter.ai/api/v1", "openrouter"),
+        ("http://localhost:11434/v1", "local model"),
+        ("https://generativelanguage.googleapis.com/v1beta/openai/", "googleapis"),
+    ],
+)
+def test_company_name_comes_from_the_address(no_keys, monkeypatch, base_url, expected):
+    if base_url:
+        monkeypatch.setenv("LLM_BASE_URL", base_url)
+    assert report.other_ai_name() == expected
+
+
+def test_other_ai_needs_a_model_and_a_key_or_address(no_keys, monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+    assert not report.other_ai_configured()  # no model yet
+    monkeypatch.setenv("LLM_MODEL", "some-model")
+    assert report.other_ai_configured()
+
+
+def test_local_ollama_needs_no_key(no_keys, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("LLM_MODEL", "some-local-model")
+    assert report.available_providers() == ["openai_compatible"]
+    assert report.describe_provider("openai_compatible") == "local model (OpenAI-compatible) · some-local-model"
+
+
+def test_all_set_up_providers_are_listed_in_order(no_keys, monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    assert report.available_providers() == ["gemini", "openai_compatible"]
+    assert choose_provider("openai_compatible") == "openai_compatible"
+    assert choose_provider("claude") is None  # asked for, but not set up

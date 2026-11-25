@@ -10,9 +10,10 @@ numpy>=2.0
 xarray>=2026.1
 matplotlib>=3.10
 
-# AI report (optional at runtime: Gemini if GEMINI_API_KEY is set, else Claude if ANTHROPIC_API_KEY is set)
+# AI report (all optional at runtime: used only when a key is set in .env)
 anthropic>=2.0
 google-genai>=3.6
+openai>=3.50
 python-dotenv>=1.0
 
 # Web UI

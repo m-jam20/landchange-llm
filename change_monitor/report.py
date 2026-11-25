@@ -1,9 +1,12 @@
 """Step 7: turn the change numbers into a short plain-language report.
 
-Three ways to write it, tried in this order (config.REPORT_PROVIDER = "auto"):
-  1. Gemini  — if GEMINI_API_KEY is set (free tier)
-  2. Claude  — if ANTHROPIC_API_KEY is set (paid)
-  3. Basic   — fixed sentences filled in by code. No AI, free, always works.
+Who writes it (config.REPORT_PROVIDER = "auto" picks the first one that is set up):
+  1. Gemini             — GEMINI_API_KEY (free tier)
+  2. Claude             — ANTHROPIC_API_KEY (paid)
+  3. Any other company  — LLM_BASE_URL + LLM_API_KEY + LLM_MODEL, for every service that
+                          speaks the OpenAI format: OpenAI, Mistral, Groq, DeepSeek,
+                          OpenRouter, or Ollama running models on your own computer
+  4. Basic              — fixed sentences filled in by code. No AI, free, always works.
 
 The AI only sees numbers and context (place, dates, threshold, clear %), never
 the images, so it cannot invent pixel counts. If the AI call fails for any
@@ -15,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -38,10 +42,6 @@ images and a threshold, not a field survey; thin lines along rivers and roads ar
 - Format: Markdown, a one-line title, then 3 short sections: **Summary**, **Main changes**, \
 **How reliable is this?** Under 250 words in total."""
 
-KEY_NAMES = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}
-MODELS = {"gemini": config.GEMINI_MODEL, "claude": config.CLAUDE_MODEL}
-
-
 class ReportUnavailable(Exception):
     """The AI report could not be written (no key, no internet, refused...). Not fatal."""
 
@@ -53,24 +53,68 @@ class Report:
     note: str | None = None  # why the AI wasn't used, if it wasn't
 
 
-# ---------------------------------------------------------------- keys and choice
-def get_api_key(provider: str) -> str | None:
-    """The key for 'gemini' or 'claude' from the environment or .env, or None."""
+# ---------------------------------------------------------------- settings from .env
+def env(name: str) -> str | None:
+    """A setting from the environment or the .env file, or None if missing/empty."""
     load_dotenv()
-    return os.environ.get(KEY_NAMES[provider]) or None
+    return (os.environ.get(name) or "").strip() or None
+
+
+def other_ai_configured() -> bool:
+    """The OpenAI-compatible slot needs a model, plus a key or an address (Ollama needs no key)."""
+    return env("LLM_MODEL") is not None and (env("LLM_API_KEY") or env("LLM_BASE_URL")) is not None
+
+
+def other_ai_name() -> str:
+    """A readable company name from LLM_BASE_URL: the main domain, e.g. 'api.mistral.ai' -> 'mistral'."""
+    url = env("LLM_BASE_URL")
+    if not url:
+        return "OpenAI"
+    host = urlparse(url).hostname or url
+    if host in ("localhost", "127.0.0.1"):
+        return "local model"
+    labels = host.split(".")
+    return labels[-2] if len(labels) >= 2 else host  # the part just before .com / .ai / ...
+
+
+# ---------------------------------------------------------------- which AIs can be used
+# name -> how to tell it's set up, which model it uses, and a label for people.
+# Order = preference when several are set up (free Gemini first).
+PROVIDERS = {
+    "gemini": {
+        "configured": lambda: env("GEMINI_API_KEY") is not None,
+        "model": lambda: config.GEMINI_MODEL,
+        "label": lambda: "Google Gemini",
+    },
+    "claude": {
+        "configured": lambda: env("ANTHROPIC_API_KEY") is not None,
+        "model": lambda: config.CLAUDE_MODEL,
+        "label": lambda: "Anthropic Claude",
+    },
+    "openai_compatible": {
+        "configured": other_ai_configured,
+        "model": lambda: env("LLM_MODEL") or "?",
+        "label": lambda: f"{other_ai_name()} (OpenAI-compatible)",
+    },
+}
 
 
 def available_providers() -> list[str]:
-    """Providers that have a key, in preference order (Gemini first: it's free)."""
-    return [p for p in ("gemini", "claude") if get_api_key(p)]
+    """Providers that are set up in .env, in preference order."""
+    return [name for name, p in PROVIDERS.items() if p["configured"]()]
 
 
 def choose_provider(preference: str = config.REPORT_PROVIDER) -> str | None:
-    """'gemini', 'claude', or None when no key is set."""
-    if preference in KEY_NAMES:
-        return preference if get_api_key(preference) else None
+    """A provider name, or None when none is set up. 'auto' = the first available one."""
+    if preference in PROVIDERS:
+        return preference if PROVIDERS[preference]["configured"]() else None
     available = available_providers()
     return available[0] if available else None
+
+
+def describe_provider(name: str) -> str:
+    """'Google Gemini · gemini-3.5-flash-lite' (for the UI and the saved results)."""
+    return f"{PROVIDERS[name]['label']()} · {PROVIDERS[name]['model']()}"
 
 
 # ---------------------------------------------------------------- prompt
@@ -101,7 +145,7 @@ def write_with_gemini(stats: dict, context: dict, client=None, model: str = conf
     from google.genai import errors, types
 
     if client is None:
-        key = get_api_key("gemini")
+        key = env("GEMINI_API_KEY")
         if key is None:
             raise ReportUnavailable("No GEMINI_API_KEY set.")
         # The timeout is in milliseconds here.
@@ -143,7 +187,7 @@ def write_with_claude(stats: dict, context: dict, client=None, model: str = conf
     import anthropic
 
     if client is None:
-        key = get_api_key("claude")
+        key = env("ANTHROPIC_API_KEY")
         if key is None:
             raise ReportUnavailable("No ANTHROPIC_API_KEY set.")
         client = anthropic.Anthropic(api_key=key)
@@ -176,7 +220,52 @@ def write_with_claude(stats: dict, context: dict, client=None, model: str = conf
     return text
 
 
-# ---------------------------------------------------------------- 3. Basic (no AI)
+# ---------------------------------------------------------------- 3. Any OpenAI-compatible service
+def write_with_openai_compatible(stats: dict, context: dict, client=None, model: str | None = None) -> str:
+    """Report text from any service that speaks the OpenAI chat format. Raises ReportUnavailable."""
+    import openai
+
+    model = model or env("LLM_MODEL")
+    name = other_ai_name()
+    if client is None:
+        if not other_ai_configured():
+            raise ReportUnavailable("Set LLM_MODEL and LLM_API_KEY (and LLM_BASE_URL for non-OpenAI services).")
+        client = openai.OpenAI(
+            api_key=env("LLM_API_KEY") or "not-needed",  # local servers like Ollama ignore the key
+            base_url=env("LLM_BASE_URL"),  # None = OpenAI itself
+            timeout=config.REPORT_TIMEOUT_S,  # seconds here
+            max_retries=1,
+        )
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_prompt(stats, context)},
+            ],
+        )
+    except openai.AuthenticationError as e:
+        raise ReportUnavailable(f"The {name} API key was rejected. Check LLM_API_KEY.") from e
+    except openai.NotFoundError as e:
+        raise ReportUnavailable(f"{name} does not know the model '{model}'. Check LLM_MODEL.") from e
+    except openai.RateLimitError as e:
+        raise ReportUnavailable(f"{name} rate limit or quota reached. Try again later.") from e
+    except openai.APITimeoutError as e:  # check before APIConnectionError: it's a subclass of it
+        raise ReportUnavailable(f"{name} did not answer within {config.REPORT_TIMEOUT_S} s.") from e
+    except openai.APIConnectionError as e:
+        raise ReportUnavailable(f"Could not reach {name}. Check LLM_BASE_URL and your internet.") from e
+    except openai.APIStatusError as e:
+        raise ReportUnavailable(f"{name} error {e.status_code}: {e.message}") from e
+
+    text = ((response.choices[0].message.content if response.choices else None) or "").strip()
+    if not text:
+        reason = response.choices[0].finish_reason if response.choices else "no answer"
+        raise ReportUnavailable(f"{name} returned no text (reason: {reason}).")
+    return text
+
+
+# ---------------------------------------------------------------- 4. Basic (no AI)
 def basic_report(stats: dict, context: dict) -> str:
     """A short Markdown report built from fixed sentences. Same numbers in -> same text out."""
     names = {name: LEGEND[code][1] for code, name in CATEGORIES.items()}
@@ -214,7 +303,7 @@ def basic_report(stats: dict, context: dict) -> str:
 
 
 # ---------------------------------------------------------------- one entry point
-WRITERS = {"gemini": write_with_gemini, "claude": write_with_claude}
+WRITERS = {"gemini": write_with_gemini, "claude": write_with_claude, "openai_compatible": write_with_openai_compatible}
 
 
 def write_report(stats: dict, context: dict, use_ai: bool = True, provider: str = config.REPORT_PROVIDER) -> Report:
@@ -224,10 +313,10 @@ def write_report(stats: dict, context: dict, use_ai: bool = True, provider: str 
 
     chosen = choose_provider(provider)
     if chosen is None:
-        note = "No GEMINI_API_KEY or ANTHROPIC_API_KEY in .env, so the report was written without AI."
+        note = "No AI key in .env (GEMINI_API_KEY, ANTHROPIC_API_KEY or LLM_*), so the report was written without AI."
         return Report(basic_report(stats, context), "basic (no AI)", note)
 
     try:
-        return Report(WRITERS[chosen](stats, context), MODELS[chosen])
+        return Report(WRITERS[chosen](stats, context), describe_provider(chosen))
     except ReportUnavailable as e:
         return Report(basic_report(stats, context), "basic (no AI)", f"{e} Showing the basic report instead.")

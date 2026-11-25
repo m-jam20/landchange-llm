@@ -22,7 +22,7 @@ The area is 2,527 ha, 98.6% of it cloud-free on both dates, and 97% unchanged. T
 1. **Search:** the least-cloudy Sentinel-2 L2A scene per period (STAC, Microsoft Planetary Computer)
 2. **Load:** only the pixels in the area, both dates on one 10 m grid, cloudy pixels removed
 3. **Measure:** NDVI, NDBI and NDWI differences, then a threshold gives one label per pixel, counted in hectares
-4. **Report:** one AI call turns the numbers into text (Gemini free tier or Claude), or a basic report is written by code without a key
+4. **Report:** one AI call turns the numbers into text, or a basic report is written by code without a key
 
 Code does all the measuring. The AI only sees the final numbers, never the images.
 
@@ -37,7 +37,7 @@ python -m change_monitor.pipeline      # command line (Berlin example; --help fo
 pytest -q                              # offline tests
 ```
 
-Optional AI report: copy `.env.example` to `.env` and add a free key from [Google AI Studio](https://aistudio.google.com) as `GEMINI_API_KEY`.
+Optional AI report: copy `.env.example` to `.env` and add a key. Gemini has a free tier ([Google AI Studio](https://aistudio.google.com)). Claude is supported too, as is any service using the OpenAI API format (OpenAI, Mistral, Groq, DeepSeek, OpenRouter, or local models with Ollama). With several keys, choose in the app or with `--ai`.
 
 ## Limitations
 

@@ -20,7 +20,7 @@ from change_monitor import config
 from change_monitor.change import detect_change
 from change_monitor.load import load_pair
 from change_monitor.render import render_all
-from change_monitor.report import Report, write_report
+from change_monitor.report import PROVIDERS, Report, write_report
 from change_monitor.search import BBox, describe_scene, find_scene_pair, validate_bbox
 
 
@@ -48,6 +48,7 @@ def run_pipeline(
     threshold: float = config.CHANGE_THRESHOLD,
     out_root: str | Path = config.OUTPUT_DIR,
     use_ai: bool = True,
+    ai_provider: str = config.REPORT_PROVIDER,
     progress=print,
 ) -> PipelineResult:
     """Steps 1-7: find scenes -> load + mask -> indices + change -> pictures -> (report).
@@ -99,7 +100,7 @@ def run_pipeline(
         "after_image_date": scenes["after"]["date"],
         "change_threshold": threshold,
     }
-    report = write_report(change.stats, context, use_ai=use_ai)
+    report = write_report(change.stats, context, use_ai=use_ai, provider=ai_provider)
     if report.note:
         progress(f"    {report.note}")
     (out_dir / "report.md").write_text(report.text + "\n", encoding="utf-8")
@@ -132,6 +133,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=config.CHANGE_THRESHOLD)
     parser.add_argument("--out", default=config.OUTPUT_DIR, help="folder for results")
     parser.add_argument("--no-ai", action="store_true", help="write the basic report without AI")
+    parser.add_argument(
+        "--ai", default=config.REPORT_PROVIDER, choices=["auto", *PROVIDERS],
+        help="which AI writes the report (default: the first one set up in .env)",
+    )
     return parser.parse_args(argv)
 
 
@@ -140,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_pipeline(
             tuple(args.bbox), args.before, args.after, name=args.name,
-            threshold=args.threshold, out_root=args.out, use_ai=not args.no_ai,
+            threshold=args.threshold, out_root=args.out, use_ai=not args.no_ai, ai_provider=args.ai,
         )
     except (ValueError, LookupError) as e:  # bad input or no scenes: a clear message, no traceback
         print(f"Error: {e}")

@@ -14,6 +14,7 @@ def test_defaults_are_the_berlin_demo():
     assert tuple(args.bbox) == config.DEMO_BBOX
     assert args.before == config.DEMO_BEFORE
     assert args.no_ai is False
+    assert args.ai == "auto"
 
 
 def test_bad_bbox_gives_a_clear_error_not_a_crash(capsys):

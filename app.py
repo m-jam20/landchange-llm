@@ -17,26 +17,29 @@ from streamlit_folium import st_folium
 
 from change_monitor import config
 from change_monitor.pipeline import run_pipeline
-from change_monitor.report import MODELS, choose_provider
+from change_monitor.report import available_providers, describe_provider
 from change_monitor.search import bbox_area_km2, validate_bbox
 from change_monitor.ui_helpers import bbox_from_geojson, change_table, check_periods, date_range, zip_folder
 
 st.set_page_config(page_title="Change Monitor", page_icon="🛰️", layout="wide")
 
+NO_AI = "none"  # dropdown value for the basic report
+
 
 @st.cache_data(show_spinner=False, max_entries=20)
-def run_cached(bbox, before, after, name, threshold, use_ai, provider, _progress=None) -> dict:
+def run_cached(bbox, before, after, name, threshold, ai_choice, ai_description, _progress=None) -> dict:
     """Run the pipeline once per unique set of inputs.
 
     Streamlit reruns this whole file on every click. Without the cache, every rerun
     would download the images again (and call the AI again).
-    `provider` is part of the key: after adding an API key, the same area runs again
-    with AI instead of returning the old basic report.
+    `ai_choice` and `ai_description` (company + model) are part of the key: switching
+    AI, or changing the model in .env, runs again instead of returning an old report.
     `_progress` starts with "_" so Streamlit leaves it out of the cache key.
     """
     result = run_pipeline(
         bbox, before, after, name=name, threshold=threshold,
-        use_ai=use_ai, progress=_progress or (lambda msg: None),
+        use_ai=ai_choice != NO_AI, ai_provider=ai_choice if ai_choice != NO_AI else "auto",
+        progress=_progress or (lambda msg: None),
     )
     # Return plain data (bytes, dicts) — easy for the cache to store.
     return {
@@ -64,15 +67,18 @@ with st.sidebar:
         "Change threshold", 0.05, 0.5, config.CHANGE_THRESHOLD, 0.05,
         help="How much an index must change to count. Lower = more sensitive, but more noise.",
     )
-    provider = choose_provider()
-    use_ai = st.toggle("Write the report with AI", value=provider is not None, disabled=provider is None)
-    if provider:
-        st.caption(f"Using **{MODELS[provider]}**. Without AI, a basic report is written by code.")
-    else:
+    # Every AI that is set up in .env, plus the basic report. The first one is the default.
+    ai_options = [*available_providers(), NO_AI]
+    ai_choice = st.selectbox(
+        "Report written by",
+        ai_options,
+        format_func=lambda option: "Basic report (no AI)" if option == NO_AI else describe_provider(option),
+    )
+    if ai_options == [NO_AI]:
         st.caption(
-            "No AI key found, so a basic report is written by code. For an AI report, get a free key at "
-            "[aistudio.google.com](https://aistudio.google.com), paste it after `GEMINI_API_KEY=` "
-            "in `.env`, and refresh this page."
+            "No AI key found, so a basic report is written by code. For an AI report, add a key to `.env` "
+            "(a free one: [aistudio.google.com](https://aistudio.google.com) → `GEMINI_API_KEY`; "
+            "other companies: see `.env.example`) and refresh this page."
         )
 
 # ---------------------------------------------------------------- header
@@ -129,7 +135,9 @@ if st.button("Run analysis", type="primary", disabled=bool(problems)):
     with st.status("Running...", expanded=True) as status:
         try:
             st.session_state["result"] = run_cached(
-                tuple(bbox), before_range, after_range, name, threshold, use_ai, provider, _progress=status.write
+                tuple(bbox), before_range, after_range, name, threshold,
+                ai_choice, describe_provider(ai_choice) if ai_choice != NO_AI else NO_AI,
+                _progress=status.write,
             )
             status.update(label="Done", state="complete", expanded=False)
         except (ValueError, LookupError) as e:  # bad input or no usable scene
